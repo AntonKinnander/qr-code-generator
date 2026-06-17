@@ -1,0 +1,53 @@
+{
+  "name": "qr-code-generator",
+  "private": true,
+  "version": "0.0.0",
+  "description": "A 100% client-side QR code generator with custom colors, transparent background, center logo, and PNG/SVG export. Nothing leaves the browser.",
+  "license": "MIT",
+  "author": "Victor Vasconcelos",
+  "homepage": "https://github.com/viktorkav/qr-code-generator#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/viktorkav/qr-code-generator.git"
+  },
+  "keywords": [
+    "qr-code",
+    "qrcode",
+    "generator",
+    "react",
+    "typescript",
+    "vite",
+    "svg",
+    "png",
+    "client-side"
+  ],
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "lint": "eslint .",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@tailwindcss/vite": "^4.3.1",
+    "qrcode": "^1.5.4",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
+    "tailwindcss": "^4.3.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^24.12.3",
+    "@types/qrcode": "^1.5.6",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "eslint": "^10.3.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.2",
+    "globals": "^17.6.0",
+    "typescript": "~6.0.2",
+    "typescript-eslint": "^8.59.2",
+    "vite": "^8.0.12"
+  }
+}
