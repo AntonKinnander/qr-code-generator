@@ -3,9 +3,10 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Context
-A 100% client-side QR code generator: type text/URL, customize colors, toggle a transparent
-background, drop a center logo, and export PNG (up to 4096px) or vector SVG. Nothing leaves
-the browser. The UI is in Brazilian Portuguese (pt-BR); code and docs are in English.
+A 100% client-side QR code generator: pick a content type (URL by default, Wi-Fi, vCard,
+event, EPC payment…), style modules (square / dots / connected-rounded / custom SVG), add a
+logo on a configurable plate, export PNG (up to 4096px) or vector SVG. Nothing leaves the
+browser. UI, code and docs are all in English.
 
 ## Stack
 - Runtime: Node (dev), browser (prod). React 19 + TypeScript ~6.0
@@ -31,39 +32,41 @@ SSH_HOST=myserver ./deploy.sh   # build + run on a remote host (rsync → docker
 
 ## Architecture
 ```
-src/App.tsx     single component (~730 LOC) — the entire app
-src/main.tsx    mounts <App/> in StrictMode
-src/index.css   @import tailwind + @theme + .checkerboard (transparent preview)
-index.html      loads the Inter font via Google Fonts
-Dockerfile      multi-stage: node:22-alpine builds → nginx:alpine serves
-nginx.conf      gzip + immutable cache for /assets/ + SPA try_files fallback
-deploy.sh       rsync + docker build + docker run on a remote host (configured via env vars)
+src/App.tsx             UI + state (single QRConfig object), small local form components
+src/qr/render.ts        renderSvg(data, cfg, px) — THE renderer; rasterize(svg, px) for PNG
+src/qr/shapes.ts        path builders (squares/connected fillets, dots, eyes), custom-SVG sanitizer, presets
+src/qr/safeZone.ts      maxPlateModules(size, ecLevel) — logo plate cap
+src/qr/contentTypes.ts  CONTENT_TYPES registry: fields (generic form) + encode()
+src/qr/config.ts        QRConfig + DEFAULT_CONFIG, history load/save, v1→v2 migration
+src/qr/urlConfig.ts     URL query params ⇄ QRConfig (+ download/sizes auto-export); no logo
+src/main.tsx            mounts <App/> in StrictMode
+src/index.css           @import tailwind + @theme + .checkerboard (transparent preview)
+Dockerfile / nginx.conf / deploy.sh   static nginx image + remote deploy
 ```
 
-Core flow — everything is state-driven over a canvas:
-- `drawQRWithLogo(canvas, size)` is the master render function (memoized via `useCallback`
-  over all config state). It draws the QR onto the canvas, then post-processes: transparency
-  and logo overlay.
-- **Two canvases**: a 320px preview (re-rendered in a `useEffect` whenever `drawQRWithLogo`
-  changes) and a detached canvas created on demand at export resolution (512/1024/2048/4096)
-  inside `downloadPNG`.
-- **SVG** (`downloadSVG`) does NOT use canvas: it re-generates the QR as a string via
-  `QRCode.toString({type:'svg'})` and manipulates the SVG DOM (DOMParser) — removing
-  background rects/paths for transparency and injecting `defs`/`clipPath` + a base64
-  `<image>` for the logo.
-- **History**: configs saved to `localStorage` under the key `qr-code-history`. Each item
-  stores the full config + a 128px PNG thumbnail (data URL). Restoring re-applies the state;
-  it does not re-generate the original output.
+Core flow:
+- `QRCode.create()` gives the module matrix; `renderSvg` builds the SVG by hand in module
+  units (`viewBox` = size + 2×margin). Finder patterns are excluded from the data path and
+  drawn as solid eyes. Modules fully inside the (rounded) logo plate are skipped ("excavated");
+  ones on its curved edge are clipped by an SVG `<mask>`, so the pattern fills the plate's corners.
+- That one SVG string feeds the preview (`<img>` data URL), the SVG download, the PNG export
+  and history thumbnails (`rasterize` → canvas). **Never add a second render path.**
+- URL config: `parseUrlConfig` runs once at module load (`URL_REQUEST` in App.tsx); auto-downloads
+  are guarded by a module-level flag so StrictMode's double effect doesn't export twice. A new
+  QRConfig field must be added to `urlConfig.ts` (RANGES / BOOLEAN_KEYS / COLOR_KEYS / ENUMS) too.
+- History: `localStorage` key `qr-code-history`, items `{id, savedAt, thumbnail, config}`;
+  only the active content type's fields are stored. `loadHistory` migrates v1 flat items.
 
 ## Gotchas
-- **Duplicated render logic**: the canvas (`drawQRWithLogo`) and SVG (`downloadSVG`) have
-  *separate* implementations of transparency and the logo overlay. Any visual behavior change
-  must be mirrored in both, or PNG and SVG will diverge.
-- **Heuristic transparency**: on the canvas, pixels where R, G, B are all `> 240` become
-  alpha 0. A light/near-white code color (`fgColor`) would be partially erased.
-- **Dead canvas**: the `canvasRef` (hidden canvas in JSX, sized to `QR_SIZE`) is not used for
-  export — `downloadPNG` creates a fresh canvas each click. `canvasRef` is effectively dead code.
-- UI and dates are in pt-BR (`toLocaleDateString('pt-BR', ...)`); `lang="pt-BR"` in the HTML.
+- **Logo safe zone**: a QR code has no data-free centre; the logo works only through error
+  correction. `maxPlateModules` caps the plate (EC recovery × 0.6, same parity as the symbol so
+  it stays centred). The size slider is a % *of that max* and goes to 200% on purpose (the UI warns
+  past 100%); `maxPlateGeometry` is the hard cap that keeps the plate off finders/timing.
+- **Custom SVG shapes are untrusted input**: `parseCustomShape` whitelists geometry
+  tags/attributes only. Keep it whitelist-based, and keep the preview as `<img>` (never inline the SVG).
+- Connected mode relies on all subpaths being clockwise in one nonzero-filled path (no seams).
+- Changes to how the output looks: test-scan the result. jsQR handles dots/custom shapes poorly; Chrome's
+  `BarcodeDetector` (Apple Vision on macOS) is a better proxy for phone cameras.
 - Bleeding-edge versions (React 19, Vite 8, TS 6, ESLint 10) — check compatibility before bumping.
 - Default error correction `'H'` — recommended when a logo covers the center.
 - **`npm run dev` does not type-check; `npm run build` does** (`tsc -b` before vite). Code that

@@ -1,45 +1,71 @@
 # QR Code Generator
 
-A fast, **100% client‑side** QR code generator. Type any text or URL, customize the
-colors, make the background transparent, drop a logo in the center, and export a
-crisp **PNG (up to 4096×4096)** or a scalable **SVG**.
+A fast, **100% client‑side** QR code generator. Pick a content type (website, Wi‑Fi,
+contact, event, payment…), style the modules (squares, dots, connected rounded shapes or
+your own SVG shape), add a logo on a configurable plate, and export a crisp
+**PNG (up to 4096×4096)** or a scalable **SVG**.
 
 No accounts, no tracking, no backend — **nothing ever leaves your browser**. Everything
-is rendered locally on a `<canvas>` and saved to `localStorage`.
-
-> The UI ships in **Brazilian Portuguese (pt‑BR)**. The code, docs, and this README are in English.
+is rendered locally and saved to `localStorage`.
 
 ## Features
 
-- **Text or URL → QR code**, regenerated live as you type.
-- **Custom colors** — pick the foreground (code) and background colors via color picker or hex input.
-- **Transparent background** — export QR codes that sit on any surface, previewed over a checkerboard.
-- **Center logo** — upload any image; it's drawn with a rounded "safe zone" backdrop so the code stays scannable. Adjustable size (10–40% of the code).
-- **Error correction levels** — `L`, `M`, `Q`, `H`. Defaults to `H` (highest), recommended when a logo covers the center.
-- **High‑resolution PNG export** — 512, 1024, 2048, or 4096 px.
-- **Vector SVG export** — infinitely scalable, logo embedded as a clipped base64 image.
-- **Local history** — save configurations with a thumbnail and restore them with one click. Stored in `localStorage`, never uploaded.
-- **Privacy by design** — fully static SPA, no server round‑trips, no analytics.
+- **13 content types**: Website (default), Text, Email, Phone, SMS, WhatsApp, Wi‑Fi,
+  Contact (vCard), Location, Event (iCalendar), App store link, Crypto payment, and
+  SEPA payment (EPC/GiroCode). Each type gets its own form with the correct escaping.
+- **Module shapes**: square (with an optional corner radius), dots, or **custom SVG**
+  (presets, or upload your own; each shape fills exactly one module).
+- **Connected mode** (square only): touching modules merge into shapes with rounded
+  outer corners and filleted inner corners.
+- **Finder "eyes"** are drawn solid with adjustable roundness, so dots and custom shapes stay scannable.
+- **Logo plate**: size, padding, corner radius, border width/color and plate color.
+  The size is capped to a **safe zone** worked out from the error-correction level and the
+  symbol size (100%). You can push it to 200% past that limit, with a warning to
+  test-scan, but never over the finder patterns. Modules under the plate are left out.
+- **Colors and transparent background**, an adjustable quiet zone, and error correction `L`/`M`/`Q`/`H` (default `H`).
+- **PNG export** (512–4096 px) and **SVG export**, both from the same renderer, so they are identical.
+- **Local history**: save configurations with a thumbnail and restore them with one click.
 
 ## How it works
 
-The whole app is a single React component driven by state. Two independent render
-paths produce the two output formats:
+`src/qr/render.ts` → `renderSvg(data, config, px)` is the **single renderer**. It reads the
+module matrix from `QRCode.create()` and builds an SVG string itself (data path or `<use>`
+elements, solid eyes, logo plate). That string is used everywhere:
 
-- **Canvas (PNG):** `drawQRWithLogo(canvas, size)` is the core renderer. It draws the QR
-  via the [`qrcode`](https://www.npmjs.com/package/qrcode) library, then post‑processes
-  the pixels: for transparency it zeroes the alpha of near‑white pixels, and for the logo
-  it paints a rounded backdrop and clips the image into rounded corners.
-  - A **320 px preview** canvas re‑renders on every state change.
-  - On export, a **detached canvas** is created on demand at the chosen resolution
-    (512/1024/2048/4096) and turned into a PNG data URL.
-- **SVG (vector):** `downloadSVG` does **not** use canvas. It re‑generates the QR as an
-  SVG string (`QRCode.toString({ type: 'svg' })`), parses it with `DOMParser`, strips the
-  background rects/paths for transparency, and injects a `<defs>`/`<clipPath>` plus a
-  base64 `<image>` for the logo.
-- **History:** saved configs live in `localStorage` under the key `qr-code-history`. Each
-  entry stores the full config plus a 128 px PNG thumbnail (data URL). Restoring re‑applies
-  the state — it does not re‑generate the original file.
+- **Preview**: shown as an `<img>` data URL. This also sandboxes user-supplied SVG content.
+- **SVG export**: downloaded as-is.
+- **PNG export and history thumbnails**: the SVG is drawn onto a canvas at the target size (`rasterize`).
+
+Saved history lives in `localStorage` under `qr-code-history` (each entry holds the full
+config plus a 128 px thumbnail). Old v1 entries are migrated when loaded.
+
+## Config links and auto-download
+
+Any code can be fully described in the URL. Opening such a link restores the settings,
+and with `download` it immediately exports each requested format at each size.
+**Export → Link with this configuration** builds a link from the current settings.
+
+```
+/?contentType=url&f.url=https://example.com&connected=1&cornerRadius=50&download=png,svg&sizes=512,1024,2048
+```
+
+| Param | Values |
+| --- | --- |
+| `contentType` | `url` `text` `email` `phone` `sms` `whatsapp` `wifi` `vcard` `location` `event` `app` `crypto` `epc` |
+| `f.<field>` | content fields, e.g. `f.ssid`, `f.password`, `f.first`, `f.iban` (keys from `src/qr/contentTypes.ts`) |
+| `fgColor` `bgColor` `borderColor` `plateBg` | hex, `#` optional |
+| `transparentBg` `connected` | `1` / `0` |
+| `errorLevel` | `L` `M` `Q` `H` |
+| `shape` | `square` `dot` `custom` |
+| `customShape` / `customShapeSvg` | preset `diamond` `star` `heart` `plus`, or URL-encoded SVG (sanitized) |
+| `margin` `cornerRadius` `dotSize` `eyeRoundness` | numbers (clamped to the UI ranges) |
+| `plateSize` `platePadding` `plateRadius` `borderWidth` | logo plate settings (apply once a logo is added) |
+| `pngResolution` | default export size |
+| `download` | `png`, `svg` or `png,svg` |
+| `sizes` | comma-separated pixel sizes, 16–8192 (files are named `qrcode-<size>.<ext>`) |
+
+The logo is never part of the link. Browsers may ask once for permission to download
+multiple files.
 
 ## Tech stack
 
@@ -83,7 +109,12 @@ There is no test suite configured.
 ## Project structure
 
 ```
-src/App.tsx     Single component — the entire app (~730 LOC)
+src/App.tsx             UI + state (form controls, history panel)
+src/qr/render.ts        the single renderer: config → SVG string; rasterize to PNG
+src/qr/shapes.ts        path builders (squares, connected fillets, dots, eyes), custom-SVG sanitizer, preset shapes
+src/qr/safeZone.ts      max logo plate size per EC level / symbol size
+src/qr/contentTypes.ts  content-type registry: form fields + encode()
+src/qr/config.ts        QRConfig, defaults, history load/save + migration
 src/main.tsx    Mounts <App/> in StrictMode
 src/index.css   @import tailwindcss + @theme tokens + .checkerboard (transparent preview)
 index.html      Loads the Inter font from Google Fonts
@@ -136,12 +167,12 @@ your browser storage clears your history.
 
 ## Notes & limitations
 
-- **Two render paths.** The canvas (PNG) and SVG exporters implement transparency and the
-  logo overlay **separately**. Any visual change must be mirrored in both, or PNG and SVG
-  will diverge.
-- **Heuristic transparency (PNG).** On the canvas, pixels where R, G, and B are all `> 240`
-  are made transparent. A very light, near‑white **foreground** color could be partially
-  erased — pick a darker code color when using a transparent background.
+- **The logo relies on error correction.** No area of a QR code is free of data. The safe
+  zone keeps the hidden area well inside what the chosen EC level can recover (×0.6
+  safety factor), so short content at a low EC level allows only a small logo or none.
+  Use `H` for the largest logo.
+- **Always test-scan** stylized codes (especially small dots and sparse custom shapes) with
+  the scanners your audience uses.
 - **Secure‑context APIs.** When the app is served over plain `http://` (e.g. on a LAN), the
   browser reports a non‑secure context, so APIs like `crypto.randomUUID` are unavailable.
   History IDs use a `crypto.getRandomValues` fallback (`genId()`) for this reason — avoid
@@ -152,7 +183,7 @@ your browser storage clears your history.
 ## Contributing
 
 Issues and pull requests are welcome. For changes that affect the generated output, please
-verify **both** the PNG and SVG exports, since they share no rendering code.
+test-scan the result. PNG and SVG share one renderer, so checking one covers both.
 
 ## License
 
