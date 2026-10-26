@@ -8,6 +8,8 @@ import { rasterize, renderSvg, svgToDataUrl } from './qr/render'
 import { PRESET_SHAPES, parseCustomShape } from './qr/shapes'
 import { MAX_EXPORT_SIZE, MIN_EXPORT_SIZE, buildConfigUrl, parseUrlConfig } from './qr/urlConfig'
 import type { ExportFormat } from './qr/urlConfig'
+import { createZip } from './qr/zip'
+import type { ZipEntry } from './qr/zip'
 
 // crypto.randomUUID() only exists in secure contexts (HTTPS/localhost). Served
 // over plain HTTP on a LAN it's undefined, so fall back to getRandomValues.
@@ -69,17 +71,34 @@ function encodeData(cfg: QRConfig): string {
   return type.encode(fieldsWithDefaults(type, cfg.fields[type.id]))
 }
 
-async function exportFile(cfg: QRConfig, format: ExportFormat, size: number, filename: string) {
+async function renderFile(cfg: QRConfig, format: ExportFormat, size: number): Promise<Blob | null> {
   const data = encodeData(cfg)
-  if (!data) return
+  if (!data) return null
   const { svg } = renderSvg(data, cfg, size)
-  if (format === 'png') {
-    download((await rasterize(svg, size)).toDataURL('image/png'), filename)
-  } else {
-    const url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }))
-    download(url, filename)
-    URL.revokeObjectURL(url)
-  }
+  if (format === 'svg') return new Blob([svg], { type: 'image/svg+xml' })
+  const canvas = await rasterize(svg, size)
+  return new Promise((resolve) => canvas.toBlob(resolve, 'image/png'))
+}
+
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob)
+  download(url, filename)
+  // Revoke later: some browsers start reading the blob after click() returns
+  setTimeout(() => URL.revokeObjectURL(url), 10_000)
+}
+
+async function exportFile(cfg: QRConfig, format: ExportFormat, size: number, filename: string) {
+  const blob = await renderFile(cfg, format, size)
+  if (blob) downloadBlob(blob, filename)
+}
+
+// Base filename from the encoded URL: host only (nothing from the first "/" on),
+// alphanumerics and hyphens only. "https://www.example.com/a?b" → "wwwexamplecom"
+function fileBaseName(cfg: QRConfig): string {
+  const data = encodeData(cfg).trim()
+  const m = /^[a-z][a-z\d+.-]*:\/\/([^/?#]*)/i.exec(data)
+  const host = m ? m[1].replace(/^[^@]*@/, '').replace(/:\d+$/, '') : ''
+  return host.replace(/[^a-z\d-]/gi, '').replace(/^-+|-+$/g, '').slice(0, 80) || 'qrcode'
 }
 
 // Clipboard API is missing in non-secure contexts (plain HTTP on a LAN)
@@ -328,22 +347,29 @@ function App() {
   const plateModules = result ? Math.round(result.plate * 10) / 10 : 0
   const beyondSafe = !!result && result.plate > result.maxPlate + 1e-6
 
-  const downloadPNG = () => exportFile(cfg, 'png', cfg.pngResolution, 'qrcode.png')
-  const downloadSVG = () => exportFile(cfg, 'svg', cfg.pngResolution, 'qrcode.svg')
+  const downloadPNG = () => exportFile(cfg, 'png', cfg.pngResolution, `${fileBaseName(cfg)}.png`)
+  const downloadSVG = () => exportFile(cfg, 'svg', cfg.pngResolution, `${fileBaseName(cfg)}.svg`)
 
-  // ?download=png,svg&sizes=… : export every format × size once on load
+  // ?download=png,svg&sizes=… : export every format × size once on load,
+  // as a single file or, when there are several, one zip
   useEffect(() => {
     if (!URL_REQUEST?.formats.length || urlDownloadsStarted) return
     urlDownloadsStarted = true
     const { config, formats, sizes } = URL_REQUEST
+    const base = fileBaseName(config)
     void (async () => {
+      if (formats.length === 1 && sizes.length === 1) {
+        await exportFile(config, formats[0], sizes[0], `${base}.${formats[0]}`)
+        return
+      }
+      const entries: ZipEntry[] = []
       for (const format of formats) {
         for (const size of sizes) {
-          await exportFile(config, format, size, `qrcode-${size}.${format}`)
-          // Browsers drop downloads fired in the same tick
-          await new Promise((r) => setTimeout(r, 250))
+          const blob = await renderFile(config, format, size)
+          if (blob) entries.push({ name: `${base}-${size}.${format}`, data: new Uint8Array(await blob.arrayBuffer()) })
         }
       }
+      if (entries.length) downloadBlob(createZip(entries), `${base}.zip`)
     })()
   }, [])
 
@@ -750,7 +776,7 @@ function App() {
                 <div>
                   <Label>Link with this configuration</Label>
                   <p className="text-xs text-slate-400 mb-3">
-                    Opening the link restores these settings and immediately downloads the selected files. The logo is
+                    Opening the link restores these settings and immediately downloads the selected files (one .zip when there are several). The logo is
                     not included.
                   </p>
                   <div className="flex flex-wrap items-center gap-4 mb-3">
